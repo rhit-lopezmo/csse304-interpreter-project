@@ -27,7 +27,13 @@
 ; Here's the one you need to solve
 (define bintree-add
   (lambda (bt num)
-    (nyi)))
+    (cases bintree bt
+      [interior-node (value left right)
+                     (interior-node value
+                                    (bintree-add left num)
+                                    (bintree-add right num))]
+      [leaf-node (datum)
+                 (leaf-node (+ datum num))])))
 
 ; This is a parser for simple Scheme expressions, 
 ; such as those in EOPL, 3.1 thru 3.3.
