@@ -46,6 +46,9 @@
   [lit-exp
    (data number?)]
   [lambda-exp
+   (id (listof symbol?))
+   (body expression?)]
+  [lambda-exp-var
    (id symbol?)
    (body expression?)]
   [app-exp
@@ -67,8 +70,9 @@
          [(eqv? (car datum) 'lambda)
           (if (symbol? (cadr datum))
               #f
-              (lambda-exp (car (2nd datum))
+              (lambda-exp (2nd datum)
                           (parse-exp (3rd datum))))]
+         [(equal? 1 (length datum)) (parse-exp (car datum))]
          [else (app-exp (parse-exp (1st datum))
                         (map parse-exp (cdr datum)))])]
       [else (error 'parse-exp "bad expression: ~s" datum)])))
