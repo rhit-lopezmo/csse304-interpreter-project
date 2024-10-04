@@ -48,11 +48,11 @@
    (data (or/c number? boolean? string? vector?))]
   
   [lambda-exp
-   (id (listof symbol?))
+   (bindings (listof symbol?))
    (body (listof expression?))]
   
   [lambda-exp-var
-   (id (listof symbol?))
+   (bindings (listof symbol?))
    (body (listof expression?))]
 
   [named-let-exp
@@ -157,12 +157,26 @@
           (if (< (length datum) 3)
               (error 'parse-exp "Error: Missing lambda arguments")
               (if (symbol? (cadr datum))
-                  (lambda-exp-var (list (cadr datum))
-                                  (map parse-exp (list (cddr datum))))
+                  (if (> (length datum) 3)
+                      (lambda-exp-var (list (cadr datum))
+                                  (map (lambda (x)
+                                         (if (list? x)
+                                             (app-exp (parse-exp (car x)) (map parse-exp (cdr x)))
+                                             (parse-exp x)))
+                                       (cddr datum)))
+                      (lambda-exp-var (list (cadr datum))
+                                      (map parse-exp (list (cddr datum)))))
                   (if (check-for-num (2nd datum))
                                      (error 'parse-exp "Error: Invalid lambda parameters")
-                                     (lambda-exp (2nd datum)
-                                                 (map parse-exp (list (cddr datum)))))))]
+                                     (if (> (length datum) 3)
+                                         (lambda-exp (2nd datum)
+                                                     (map (lambda (x)
+                                                                    (if (list? x)
+                                                                        (app-exp (parse-exp (car x)) (map parse-exp (cdr x)))
+                                                                        (parse-exp x)))
+                                                          (cddr datum)))
+                                         (lambda-exp (2nd datum)
+                                                     (map parse-exp (list (cddr datum))))))))]
 
          ;Named Let
          [(and (eqv? (car datum) 'let) (not (list? (cadr datum))))
@@ -171,7 +185,7 @@
             [(not (list? (3rd datum))) (error 'parse-exp "Error: Let params not a list")]
             [(not (check-lets (3rd datum))) (error 'parse-exp "Error: let params invalid")]
             [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (caddr datum))])
-                   (named-let-exp (cadr datum) params (parse-exp (cdddr datum))))]
+                   (named-let-exp (cadr datum) params (map parse-exp (cdddr datum))))]
             )]
 
          ;Let
@@ -228,28 +242,45 @@
 (define unparse-exp
   (lambda (exp)
     (cases expression exp
+      
       [var-exp (id)
                id]
+      
       [lit-exp (data)
                data]
-      [lambda-exp (id body)
-                  id]
-      [lambda-exp-var (id body)
-                      id]
+      
+      [lambda-exp (bindings body)
+                  (list 'lambda bindings (map unparse-exp body))]
+      
+      [lambda-exp-var (bindings body)
+                      (append (list 'lambda (car bindings)) (map unparse-exp body))]
+      
       [named-let-exp (name params body)
-                     name]
+                     (append (list 'let
+                                   name
+                                   (map (lambda (curr-pair) (list (car curr-pair) (unparse-exp (cadr curr-pair)))) params))
+                             (map unparse-exp body))]
+      
       [let-exp (params body)
-               params]
+               (append (list 'let
+                             (map (lambda (curr-pair) (list (car curr-pair) (unparse-exp (cadr curr-pair)))) params))
+                       (map unparse-exp (list body)))]
+      
       [let*-exp (params body)
                 params]
+      
       [letrec-exp (params body)
                   params]
+      
       [if-exp (if-clause body)
               if-clause]
+      
       [if-else-exp (if-clause true-body false-body)
                    if-clause]
+      
       [set!-exp (var body)
                 var]
+      
       [app-exp (rator rand)
                rator])))
 
