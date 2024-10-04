@@ -78,8 +78,8 @@
 
   [if-else-exp
    (if-clause expression?)
-   (body expression?)
-   (body expression?)]
+   (true-body expression?)
+   (false-body expression?)]
 
   [set!-exp
    (var symbol?)
@@ -227,7 +227,31 @@
 
 (define unparse-exp
   (lambda (exp)
-    (nyi)))
+    (cases expression exp
+      [var-exp (id)
+               id]
+      [lit-exp (data)
+               data]
+      [lambda-exp (id body)
+                  id]
+      [lambda-exp-var (id body)
+                      id]
+      [named-let-exp (name params body)
+                     name]
+      [let-exp (params body)
+               params]
+      [let*-exp (params body)
+                params]
+      [letrec-exp (params body)
+                  params]
+      [if-exp (if-clause body)
+              if-clause]
+      [if-else-exp (if-clause true-body false-body)
+                   if-clause]
+      [set!-exp (var body)
+                var]
+      [app-exp (rator rand)
+               rator])))
 
 ; An auxiliary procedure that could be helpful.
 (define var-exp?
