@@ -62,11 +62,11 @@
 
   [let-exp
    (params (listof (list/c symbol? expression?)))
-   (body expression?)]
+   (body (listof expression?))]
 
   [let*-exp
    (params (listof (list/c symbol? expression?)))
-   (body expression?)]
+   (body (listof expression?))]
 
   [letrec-exp
    (params (listof (list/c symbol? expression?)))
@@ -82,7 +82,7 @@
    (false-body expression?)]
 
   [set!-exp
-   (var symbol?)
+   (var expression?)
    (body expression?)]
   
   [app-exp
@@ -137,6 +137,18 @@
     )
   )
 
+(define app?
+  (lambda (exp)
+    (cond [(null? exp) #f]
+          [(not (list? exp)) #f]
+          [(or (eqv? (car exp) 'lambda)
+               (eqv? (car exp) 'let)
+               (eqv? (car exp) 'letrec)
+               (eqv? (car exp) 'let*)
+               (eqv? (car exp) 'set!)
+               (eqv? (car exp) 'if))
+           #f]
+          [else #t])))
 
 (define parse-exp         
   (lambda (datum)
@@ -150,7 +162,7 @@
       [(pair? datum)
        (cond
          ;Length 1
-         [(equal? 1 (length datum)) (parse-exp (car datum))]
+         [(and (equal? 1 (length datum)) (not (symbol? (car datum)))) (parse-exp (car datum))]
 
          ;Lambda (The error checking is a little messier for this one, mb)
          [(eqv? (car datum) 'lambda)
@@ -160,7 +172,7 @@
                   (if (> (length datum) 3)
                       (lambda-exp-var (list (cadr datum))
                                   (map (lambda (x)
-                                         (if (list? x)
+                                         (if (app? x)
                                              (app-exp (parse-exp (car x)) (map parse-exp (cdr x)))
                                              (parse-exp x)))
                                        (cddr datum)))
@@ -168,15 +180,12 @@
                                       (map parse-exp (list (cddr datum)))))
                   (if (check-for-num (2nd datum))
                                      (error 'parse-exp "Error: Invalid lambda parameters")
-                                     (if (> (length datum) 3)
-                                         (lambda-exp (2nd datum)
-                                                     (map (lambda (x)
-                                                                    (if (list? x)
-                                                                        (app-exp (parse-exp (car x)) (map parse-exp (cdr x)))
-                                                                        (parse-exp x)))
-                                                          (cddr datum)))
-                                         (lambda-exp (2nd datum)
-                                                     (map parse-exp (list (cddr datum))))))))]
+                                     (lambda-exp (2nd datum)
+                                                 (map (lambda (x)
+                                                        (if (app? x)
+                                                            (app-exp (parse-exp (car x)) (map parse-exp (cdr x)))
+                                                            (parse-exp x)))
+                                                      (cddr datum))))))]
 
          ;Named Let
          [(and (eqv? (car datum) 'let) (not (list? (cadr datum))))
@@ -194,8 +203,9 @@
             [(not (check-proper-list (2nd datum))) (error 'parse-exp "Error: Improper let params")]
             [(not (list? (cadr datum))) (error 'parse-exp "Error: Let params not a list")]
             [(not (check-lets (2nd datum))) (error 'parse-exp "Error: let params invalid")]
+            [(null? (cddr datum)) (error 'parse-exp "Error: no body provided")]
             [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (cadr datum))])
-                   (let-exp params (parse-exp (cddr datum))))]
+                   (let-exp params (map parse-exp (cddr datum))))]
             )]
 
          ;Let*
@@ -205,7 +215,7 @@
             [(not (list? (cadr datum))) (error 'parse-exp "Error: Let params not a list")]
             [(not (check-lets (2nd datum))) (error 'parse-exp "Error: let params invalid")]
             [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (cadr datum))])
-                    (let*-exp params (parse-exp (cddr datum))))]
+                    (let*-exp params (map parse-exp (cddr datum))))]
             )]
 
          ;LetRec
@@ -214,8 +224,9 @@
             [(not (check-proper-list (2nd datum))) (error 'parse-exp "Error: Improper let params")]
             [(not (list? (cadr datum))) (error 'parse-exp "Error: Let params not a list")]
             [(not (check-lets (2nd datum))) (error 'parse-exp "Error: let params invalid")]
+            [(null? (cddr datum)) (error 'parse-exp "Error: no body provided")]
             [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (cadr datum))])
-                    (letrec-exp params (parse-exp (cddr datum))))]
+                    (letrec-exp params (parse-exp (caddr datum))))]
             )]
 
          ;If/If else
@@ -230,7 +241,7 @@
          [(eqv? (car datum) 'set!)
           (cond
             [(not (equal? (length datum) 3)) (error 'parse-exp "Error: Invalid set! length")]
-            [else (set!-exp (2nd datum) (parse-exp (3rd datum)))]
+            [else (set!-exp (parse-exp (2nd datum)) (parse-exp (3rd datum)))]
             )]
           
 
@@ -250,7 +261,7 @@
                data]
       
       [lambda-exp (bindings body)
-                  (list 'lambda bindings (map unparse-exp body))]
+                  (append (list 'lambda bindings) (map unparse-exp body))]
       
       [lambda-exp-var (bindings body)
                       (append (list 'lambda (car bindings)) (map unparse-exp body))]
@@ -259,30 +270,34 @@
                      (append (list 'let
                                    name
                                    (map (lambda (curr-pair) (list (car curr-pair) (unparse-exp (cadr curr-pair)))) params))
-                             (map unparse-exp body))]
+                             (car (map unparse-exp body)))]
       
       [let-exp (params body)
                (append (list 'let
                              (map (lambda (curr-pair) (list (car curr-pair) (unparse-exp (cadr curr-pair)))) params))
-                       (map unparse-exp (list body)))]
+                       (map unparse-exp body))]
       
       [let*-exp (params body)
-                params]
+                (append (list 'let*
+                              (map (lambda (curr-pair) (list (car curr-pair) (unparse-exp (cadr curr-pair)))) params))
+                        (map unparse-exp body))]
       
       [letrec-exp (params body)
-                  params]
+                  (append (list 'letrec
+                                (map (lambda (curr-pair) (list (car curr-pair) (unparse-exp (cadr curr-pair)))) params))
+                          (map unparse-exp (list body)))]
       
       [if-exp (if-clause body)
-              if-clause]
+              (list 'if (unparse-exp if-clause) (unparse-exp body))]
       
       [if-else-exp (if-clause true-body false-body)
-                   if-clause]
+                   (list 'if (unparse-exp if-clause) (unparse-exp true-body) (unparse-exp false-body))]
       
       [set!-exp (var body)
-                var]
+                (list 'set! (unparse-exp var) (unparse-exp body))]
       
       [app-exp (rator rand)
-               rator])))
+               (append (list (unparse-exp rator)) (map unparse-exp rand))])))
 
 ; An auxiliary procedure that could be helpful.
 (define var-exp?
