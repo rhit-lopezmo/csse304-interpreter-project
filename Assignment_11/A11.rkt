@@ -45,7 +45,7 @@
    (id symbol?)]
   
   [lit-exp
-   (data (or/c number? boolean? string? vector?))]
+   (data (or/c number? boolean? string? vector? null?))]
   
   [lambda-exp
    (bindings (listof symbol?))
