@@ -322,27 +322,38 @@
 (define top-level-eval
   (lambda (form)
     ; later we may add things that are not expressions.
-    (eval-exp form)))
+    (eval-exp (empty-env) form)))
 
 ; eval-exp is the main component of the interpreter
 
 (define eval-exp
-  (lambda (exp)
+  (lambda (env exp)
     (cases expression exp
+      [if-else-exp (if-clause true-body false-body)
+              (if (eval-exp env if-clause)
+                  (eval-exp env true-body)
+                  (eval-exp env false-body))]
+      [let-exp (vars var-exps bodies) ;Change this to be consistent with ours
+               (let* ([init-vals (eval-rands env var-exps)]
+                      [new-env (extend-env
+                                vars
+                                init-vals
+                                env)])
+                      (eval-rands new-env bodies))]
       [lit-exp (datum) datum]
       [var-exp (id)
                (apply-env init-env id)]
       [app-exp (rator rands)
-               (let ([proc-value (eval-exp rator)]
-                     [args (eval-rands rands)])
+               (let ([proc-value (eval-exp env rator)]
+                     [args (eval-rands env rands)])
                  (apply-proc proc-value args))]
       [else (error 'eval-exp "Bad abstract syntax: ~a" exp)])))
 
 ; evaluate the list of operands, putting results into a list
 
 (define eval-rands
-  (lambda (rands)
-    (map eval-exp rands)))
+  (lambda (env rands)
+    (map (lambda (exp) (eval-exp env exp))) rands))
 
 ;  Apply a procedure to its arguments.
 ;  At this point, we only have primitive procedures.  
@@ -353,6 +364,7 @@
     (cases proc-val proc-value
       [prim-proc (op) (apply-prim-proc op args)]
       ; You will add other cases
+      ;Add lambda here!
       [else (error 'apply-proc
                    "Attempt to apply bad procedure: ~s" 
                    proc-value)])))
