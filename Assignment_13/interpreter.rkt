@@ -56,6 +56,9 @@
   [set!-exp
    (var expression?)
    (body expression?)]
+
+  [quote-exp
+   (body (or/c symbol? (listof symbol?)))]
   
   [app-exp
    (rator expression?)
@@ -249,8 +252,11 @@
             [(not (equal? (length datum) 3)) (error 'parse-exp "Error: Invalid set! length")]
             [else (set!-exp (parse-exp (2nd datum)) (parse-exp (3rd datum)))]
             )]
-          
 
+         ;Quote
+         [(eqv? (car datum) 'quote)
+          (quote-exp (cdr datum))]
+          
          ;Application
          [else (app-exp (parse-exp (1st datum))
                         (map parse-exp (cdr datum)))])]
@@ -339,14 +345,15 @@
 (define eval-exp
   (lambda (env exp)
     (cases expression exp
+      [quote-exp (body) body]
       [if-else-exp (if-clause true-body false-body)
               (if (eval-exp env if-clause)
                   (eval-exp env true-body)
                   (eval-exp env false-body))]
-      [let-exp (vars var-exps bodies) ;Change this to be consistent with ours
-               (let* ([init-vals (eval-rands env var-exps)]
+      [let-exp (params bodies) ;Change this to be consistent with ours
+               (let* ([init-vals (eval-rands env (map (lambda (x) (second x)) params))]
                       [new-env (extend-env
-                                vars
+                                (map (lambda (x) (first x)) params)
                                 init-vals
                                 env)])
                       (eval-rands new-env bodies))]
@@ -363,7 +370,7 @@
 
 (define eval-rands
   (lambda (env rands)
-    (map (lambda (exp) (eval-exp env exp))) rands))
+    (map (lambda (exp) (eval-exp env exp)) rands)))
 
 ;  Apply a procedure to its arguments.
 ;  At this point, we only have primitive procedures.  
@@ -379,7 +386,7 @@
                    "Attempt to apply bad procedure: ~s" 
                    proc-value)])))
 
-(define *prim-proc-names* '(+ - * add1 sub1 cons =))
+(define *prim-proc-names* '(+ - * add1 sub1 cons = quote))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -401,6 +408,7 @@
       [(sub1) (- (1st args) 1)]
       [(cons) (cons (1st args) (2nd args))]
       [(=) (= (1st args) (2nd args))]
+      [(quote) (first args)]
       [else (error 'apply-prim-proc 
                    "Bad primitive procedure name: ~s" 
                    prim-proc)])))
