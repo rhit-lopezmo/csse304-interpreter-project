@@ -58,7 +58,12 @@
    (body expression?)]
 
   [quote-exp
-   (body (or/c symbol? (listof symbol?)))]
+   (body (or/c symbol? (listof symbol?) list? string? vector? null?))]
+
+  [closure-exp
+   (params (listof symbol?))
+   (body (listof expression?))
+   (stored-env environment?)]
   
   [app-exp
    (rator expression?)
@@ -82,7 +87,11 @@
 
 (define-datatype proc-val proc-val?
   [prim-proc
-   (name symbol?)])
+   (name symbol?)]
+  [lambda-proc
+   (closure expression?)])
+
+
 
   
 ;-------------------+
@@ -255,7 +264,7 @@
 
          ;Quote
          [(eqv? (car datum) 'quote)
-          (quote-exp (cdr datum))]
+          (quote-exp (cadr datum))]
           
          ;Application
          [else (app-exp (parse-exp (1st datum))
@@ -356,15 +365,36 @@
                                 (map (lambda (x) (first x)) params)
                                 init-vals
                                 env)])
-                      (eval-rands new-env bodies))]
+                      (last (eval-rands new-env bodies)))]
       [lit-exp (datum) datum]
+      [closure-exp (params body stored-env)
+                   (let* ([init-vals (map (lambda (y) (apply-env env y)) params)]
+                          [new-env (extend-env params init-vals stored-env)])
+                     (last (eval-rands new-env body)))]
+                
+      [lambda-exp (bindings body) (lambda-proc (closure-exp bindings body env))]
       [var-exp (id)
-               (apply-env init-env id)]
+               (apply-env env id)]
       [app-exp (rator rands)
-               (let ([proc-value (eval-exp env rator)]
-                     [args (eval-rands env rands)])
-                 (apply-proc proc-value args))]
+               (cond [(equal? (car rator) 'lambda-exp)
+                      (let* ([closure (cadr (eval-exp env rator))]
+                             [init-vals (eval-rands env rands)])
+                        (let-values ([(closure-params closure-body stored-env) (closure-fields closure)])
+                          (let ([new-env (extend-env closure-params init-vals stored-env)])
+                            (last (eval-rands new-env closure-body)))))]
+                     [else (let ([proc-value (eval-exp env rator)]
+                             [args (eval-rands env rands)])
+                         (apply-proc proc-value args))]
+               )]
       [else (error 'eval-exp "Bad abstract syntax: ~a" exp)])))
+
+(define closure-fields
+  (lambda (closure)
+    (cases expression closure
+      [closure-exp (params body stored-env)
+               (values params body stored-env)]
+      [else (error "don't do this")])))
+      
 
 ; evaluate the list of operands, putting results into a list
 
@@ -380,13 +410,18 @@
   (lambda (proc-value args)
     (cases proc-val proc-value
       [prim-proc (op) (apply-prim-proc op args)]
+      [lambda-proc (closure) (let-values ([(closure-params closure-body stored-env) (closure-fields closure)])
+                               (eval-exp (extend-env closure-params args stored-env) closure))]
       ; You will add other cases
       ;Add lambda here!
       [else (error 'apply-proc
                    "Attempt to apply bad procedure: ~s" 
                    proc-value)])))
 
-(define *prim-proc-names* '(+ - * add1 sub1 cons = quote))
+(define *prim-proc-names* '(+ - * add1 sub1 cons = quote / list->vector vector->list vector?
+                              number? symbol? caar cadr cadar list? eq? equal? null? procedure?
+                              >= not zero? car cdr length list pair? vector vector-set!
+                              vector-ref display newline cr))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -401,14 +436,47 @@
 (define apply-prim-proc
   (lambda (prim-proc args)
     (case prim-proc
-      [(+) (+ (1st args) (2nd args))]
-      [(-) (- (1st args) (2nd args))]
-      [(*) (* (1st args) (2nd args))]
+      [(+) (apply + args)]
+      [(-) (apply - args)]
+      [(*) (apply * args)]
+      [(/) (apply / args)]
       [(add1) (+ (1st args) 1)]
       [(sub1) (- (1st args) 1)]
       [(cons) (cons (1st args) (2nd args))]
       [(=) (= (1st args) (2nd args))]
+      [(list->vector) (list->vector (first args))]
+      [(vector->list) (vector->list (first args))] 
+      [(vector?) (vector? (first args))]
+      [(number?) (number? (first args))]
+      [(symbol?) (symbol? (first args))] 
+      [(caar) (caar (first args))] 
+      [(cadr) (cadr (first args))] 
+      [(cadar) (cadar (first args))] 
+      [(list?) (list? (first args))]
+      [(eq?) (if (eq? (first args) (second args)) #t #f)]
+      [(equal?) (if (equal? (first args) (second args)) #t #f)] 
+      [(null?) (null? (first args))] 
+      [(>=) (if (>= (first args) (second args)) #t #f)]
+      [(not) (not (first args))] 
+      [(zero?) (if (equal? (car args) 0) #t #f)] 
+      [(car) (car (first args))]
+      [(cdr) (cdr (first args))]
+      [(length) (length (first args))] 
+      [(list) (apply list args)]
+      [(procedure?) (or (procedure? (first args)) (proc-val? (first args)))]
+      [(pair?) (pair? (first args))]
+      [(vector) (apply vector args)]
+      [(vector-set!) (vector-set! (first args) (second args) (third args))]
+      [(vector-ref) (vector-ref (first args) (second args))]
+      [(display) (apply display args)]
+      [(newline) (newline)]
       [(quote) (first args)]
+      [(cr) (letrec ([make-easy (lambda (str proc)
+                               (cond
+                                 [(null? str) proc]
+                                 [(equal? (car str) #\a) (make-easy (cdr str) (cons car proc))]
+                                 [(equal? (car str) #\d) (make-easy (cdr str) (cons cdr proc))]))])
+              ((apply compose (reverse (make-easy (string->list (first args)) '()))) (second args)))]
       [else (error 'apply-prim-proc 
                    "Bad primitive procedure name: ~s" 
                    prim-proc)])))
