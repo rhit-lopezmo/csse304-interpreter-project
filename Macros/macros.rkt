@@ -10,20 +10,24 @@
   (syntax-case stx ()
     [(my-let ((name value) ...) bodies ...)
      #'((lambda (name ...) bodies ...) value ...)]
-    [(my-let _ ...) ; <- NOTE THIS PATTERN IS NOT RIGHT
-     #''nyi] ; the above pattern is just a way to ensure the test cases run
-             ; and expand into the expression 'nyi rather than crashing
-    ))
+    [(my-let funcName ((name value) ...) bodies ...)
+     #'(letrec ([funcName (lambda (name ...) bodies ...)]) (funcName value ...))]))
 
 (define-syntax (null-let stx)
    (syntax-case stx ()
-     [(null-let _ ...)
-      #''nyi]))
+     [(null-let (name ...) bodies ...)
+      #'(let ((name null) ...) bodies ...)]))
 
 (define-syntax (all-equal stx)
   (syntax-case stx ()
-    [(all-equal _ ...)
-     #''nyi]))
+    [(all-equal exp)
+     #'exp]
+    [(all-equal exp exp2 rest ...)
+     #'(if (equal? exp exp2)
+           (all-equal exp2 rest ...)
+           #f)]))
+
+(all-equal 1 1 1 1)
 
 (define-syntax (begin-unless stx)
   (syntax-case stx ()
