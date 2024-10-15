@@ -2,6 +2,8 @@
 
 ; only functions in racket/base can be used by default in macros
 ; this adds some other useful prodcedures
+
+;Collaboration between Bryson Lee and Manuel Lopez. Talked to Buffalo in class about working together
 (require (for-syntax racket/list)) 
 
 (provide my-let null-let all-equal begin-unless range-cases ifelse let-destruct)
