@@ -186,6 +186,11 @@
       [(not (list? datum)) (error 'parse-exp "Error: Improper list")]
       [(pair? datum)
        (cond
+
+         ; Lambda App
+         [(and (equal? 1 (length datum)) (list? (car datum)) (equal? 'lambda (caar datum)))
+          (app-exp (parse-exp (car datum)) '())]
+         
          ;Length 1
          [(and (equal? 1 (length datum)) (not (symbol? (car datum)))) (parse-exp (car datum))]
 
@@ -393,8 +398,6 @@
                              [init-vals (eval-rands env rands)])
                         (let-values ([(closure-params closure-body stored-env) (closure-fields closure)])
                           (let ([new-env (extend-env closure-params init-vals stored-env)])
-                            (display new-env)
-                            (newline)
                             (last (eval-rands new-env closure-body)))))]
                      [(equal? (car rator) 'lambda-exp-var)
                       (let* ([closure (cadr (eval-exp env rator))]
@@ -484,7 +487,11 @@
       [(cdr) (cdr (first args))]
       [(length) (length (first args))] 
       [(list) (apply list args)]
-      [(procedure?) (or (procedure? (first args)) (proc-val? (first args)))]
+      [(procedure?) (if (list? args)
+                        (if (list? (first args))
+                            (or (procedure? (first args)) (proc-val? (first args)))
+                            (or (procedure? args) (proc-val? args)))
+                        (procedure? args))]
       [(pair?) (pair? (first args))]
       [(vector) (apply vector args)]
       [(vector-set!) (vector-set! (first args) (second args) (third args))]
@@ -492,8 +499,8 @@
       [(display) (apply display args)]
       [(newline) (newline)]
       [(quote) (first args)]
-      [(map) (map (second (first args)) (cdr args))]
-      [(apply) (apply (second (first args)) (cdr args))]
+      [(map) (map (lambda (x) (apply-proc (first args) x)) (second args))]
+      [(apply) (apply (lambda (x) (apply-proc (first args) x)) (cdr args))]
       [(cr) (letrec ([make-easy (lambda (str proc)
                                (cond
                                  [(null? str) proc]
