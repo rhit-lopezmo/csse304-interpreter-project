@@ -73,7 +73,8 @@
   
   [app-exp
    (rator expression?)
-   (rand (listof expression?))])
+   (rand (listof expression?))]
+  )
 	
 ;; environment type definitions
 
@@ -273,8 +274,9 @@
           (quote-exp (cadr datum))]
           
          ;Application
-         [else (app-exp (parse-exp (1st datum))
-                        (map parse-exp (cdr datum)))])]
+         [else
+          (app-exp (parse-exp (1st datum))
+                   (map parse-exp (cdr datum)))])]
       [else (error 'parse-exp "bad expression: ~s" datum)])))
 
 
@@ -361,6 +363,9 @@
   (lambda (env exp)
     (cases expression exp
       [quote-exp (body) body]
+      [if-exp (if-clause body)
+              (when (eval-exp env if-clause)
+                (eval-exp env body))]
       [if-else-exp (if-clause true-body false-body)
               (if (eval-exp env if-clause)
                   (eval-exp env true-body)
@@ -379,6 +384,7 @@
                      (last (eval-rands new-env body)))]
                 
       [lambda-exp (bindings body) (lambda-proc (closure-exp bindings body env))]
+      [lambda-exp-var (bindings body) (lambda-proc (closure-exp bindings body env))]
       [var-exp (id)
                (apply-env env id)]
       [app-exp (rator rands)
@@ -387,6 +393,14 @@
                              [init-vals (eval-rands env rands)])
                         (let-values ([(closure-params closure-body stored-env) (closure-fields closure)])
                           (let ([new-env (extend-env closure-params init-vals stored-env)])
+                            (display new-env)
+                            (newline)
+                            (last (eval-rands new-env closure-body)))))]
+                     [(equal? (car rator) 'lambda-exp-var)
+                      (let* ([closure (cadr (eval-exp env rator))]
+                             [init-vals (eval-rands env rands)])
+                        (let-values ([(closure-params closure-body stored-env) (closure-fields closure)])
+                          (let ([new-env (extend-env closure-params (list init-vals) stored-env)])
                             (last (eval-rands new-env closure-body)))))]
                      [else (let ([proc-value (eval-exp env rator)]
                              [args (eval-rands env rands)])
@@ -427,7 +441,7 @@
 (define *prim-proc-names* '(+ - * add1 sub1 cons = quote / list->vector vector->list vector?
                               number? symbol? caar cadr cadar list? eq? equal? null? procedure?
                               >= not zero? car cdr length list pair? vector vector-set!
-                              vector-ref display newline cr))
+                              vector-ref display newline cr < map apply))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -463,6 +477,7 @@
       [(equal?) (if (equal? (first args) (second args)) #t #f)] 
       [(null?) (null? (first args))] 
       [(>=) (if (>= (first args) (second args)) #t #f)]
+      [(<) (if (< (first args) (second args)) #t #f)]
       [(not) (not (first args))] 
       [(zero?) (if (equal? (car args) 0) #t #f)] 
       [(car) (car (first args))]
@@ -477,6 +492,8 @@
       [(display) (apply display args)]
       [(newline) (newline)]
       [(quote) (first args)]
+      [(map) (map (second (first args)) (cdr args))]
+      [(apply) (apply (second (first args)) (cdr args))]
       [(cr) (letrec ([make-easy (lambda (str proc)
                                (cond
                                  [(null? str) proc]
