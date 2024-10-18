@@ -74,6 +74,14 @@
   [app-exp
    (rator expression?)
    (rand (listof expression?))]
+
+  [cond-exp
+   (test expression?)
+   (bodies (listof expression?))]
+
+  [cond-block
+   (exps (listof expression?))
+   ]
   )
 	
 ;; environment type definitions
@@ -274,6 +282,12 @@
             [else (set!-exp (parse-exp (2nd datum)) (parse-exp (3rd datum)))]
             )]
 
+         ;Cond
+         [(eqv? (car datum) 'cond)
+          (cond-block (map (lambda (condExp)
+                 (cond-exp (parse-exp (first condExp)) (map parse-exp (cdr condExp))))
+                 (cdr datum)))]
+
          ;Quote
          [(eqv? (car datum) 'quote)
           (quote-exp (cadr datum))]
@@ -338,6 +352,22 @@
 ;                       |
 ;-----------------------+
 
+(define syntax-expand
+    (lambda (exp)
+        (cases expression exp
+            [var-exp (symbol) exp] ;; do nothing
+            [lit-exp (literal) exp] ;; do nothing
+            [cond-exp (test bodies)
+                      (if-else-exp test
+                          (last bodies)
+                          (lit-exp #f))]
+            [cond-block (exps)
+                        (let ([result (syntax-expand (car exps))])
+                          (if-else-exp result
+                              result
+                              (syntax-expand (cdr exps))))]
+          [else (display "todo")])))
+
 ; To be added in assignment 14.
 
 ;---------------------------------------+
@@ -360,7 +390,7 @@
 (define top-level-eval
   (lambda (form)
     ; later we may add things that are not expressions.
-    (eval-exp (empty-env) form)))
+    (top-level-eval (parse-exp form))))
 
 ; eval-exp is the main component of the interpreter
 
@@ -521,4 +551,5 @@
       (rep))))  ; tail-recursive, so stack doesn't grow.
 
 (define eval-one-exp
-  (lambda (x) (top-level-eval (parse-exp x))))
+   (lambda (exp) 
+       (top-level-eval (syntax-expand (parse-exp exp)))))
