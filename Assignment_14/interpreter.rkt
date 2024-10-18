@@ -76,12 +76,9 @@
    (rand (listof expression?))]
 
   [cond-exp
-   (test expression?)
-   (bodies (listof expression?))]
-
-  [cond-block
-   (exps (listof expression?))
-   ]
+   (firstTest expression?)
+   (firstBodies (listof expression?))
+   (restExps (listof expression?))]
   )
 	
 ;; environment type definitions
@@ -284,10 +281,18 @@
 
          ;Cond
          [(eqv? (car datum) 'cond)
-          (cond-block (map (lambda (condExp)
-                 (cond-exp (parse-exp (first condExp)) (map parse-exp (cdr condExp))))
-                 (cdr datum)))]
-
+          (let* ([exps (cdr datum)]
+                 [firstTest (caar exps)]
+                 [firstBodies (cdar exps)]
+                 [restExps (cdr exps)])
+            (if (null? restExps)
+                (cond-exp (parse-exp firstTest)
+                          (map parse-exp firstBodies)
+                          '())
+                (cond-exp (parse-exp firstTest)
+                          (map parse-exp firstBodies)
+                          (parse-exp (cons 'cond restExps)))))]
+         
          ;Quote
          [(eqv? (car datum) 'quote)
           (quote-exp (cadr datum))]
@@ -298,6 +303,8 @@
                    (map parse-exp (cdr datum)))])]
       [else (error 'parse-exp "bad expression: ~s" datum)])))
 
+(require racket/trace)
+(trace parse-exp)
 
 ;-------------------+
 ;                   |
@@ -358,15 +365,8 @@
             [var-exp (symbol) exp] ;; do nothing
             [lit-exp (literal) exp] ;; do nothing
             [cond-exp (test bodies)
-                      (if-else-exp test
-                          (last bodies)
-                          (lit-exp #f))]
-            [cond-block (exps)
-                        (let ([result (syntax-expand (car exps))])
-                          (if-else-exp result
-                              result
-                              (syntax-expand (cdr exps))))]
-          [else (display "todo")])))
+                      (if-else-exp test (app-exp (var-exp 'begin) bodies) #f)]
+          [else exp])))
 
 ; To be added in assignment 14.
 
@@ -390,7 +390,7 @@
 (define top-level-eval
   (lambda (form)
     ; later we may add things that are not expressions.
-    (top-level-eval (parse-exp form))))
+    (eval-exp init-env form)))
 
 ; eval-exp is the main component of the interpreter
 
@@ -474,7 +474,7 @@
 (define *prim-proc-names* '(+ - * add1 sub1 cons = quote / list->vector vector->list vector?
                               number? symbol? caar cadr cadar list? eq? equal? null? procedure?
                               >= not zero? car cdr length list pair? vector vector-set!
-                              vector-ref display newline cr < map apply))
+                              vector-ref display newline cr < map apply begin else))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -531,6 +531,8 @@
       [(quote) (first args)]
       [(map) (map (lambda (x) (apply-proc (first args) x)) (second args))]
       [(apply) (apply (lambda (x) (apply-proc (first args) x)) (cdr args))]
+      [(begin) (eval (append (list 'begin) args))]
+      [(else) (eval (append (list 'begin) args))]
       [(cr) (letrec ([make-easy (lambda (str proc)
                                (cond
                                  [(null? str) proc]
