@@ -26,8 +26,8 @@
    (data (or/c number? boolean? string? vector? null?))]
   
   [lambda-exp
-   (bindings (listof symbol?))
-   (body (listof expression?))]
+   (bindings (or/c (listof symbol?) symbol?))
+   (body (or/c (listof expression?) expression?))]
   
   [lambda-exp-var
    (bindings (listof symbol?))
@@ -72,13 +72,21 @@
    (stored-env environment?)]
   
   [app-exp
-   (rator expression?)
-   (rand (listof expression?))]
+   (rator (or/c (listof expression?) expression?))
+   (rand (or/c (listof expression?) expression? list?))]
 
   [cond-exp
-   (firstTest expression?)
-   (firstBodies (listof expression?))
-   (restExps (listof expression?))]
+   (firstTest (or/c expression? null?))
+   (firstBodies (or/c (listof expression?) null?))
+   (restExps (or/c (listof expression?) null? expression?))]
+
+  [or-exp
+   (body (or/c (listof expression?) expression?))
+   (rest (or/c (listof expression?) expression? null?))]
+
+  [begin-exp
+    (firstExp (or/c (listof expression?) expression?))
+    (rest (or/c (listof expression?) expression?))]
   )
 	
 ;; environment type definitions
@@ -240,8 +248,8 @@
             [(not (check-lets (2nd datum))) (error 'parse-exp "Error: let params invalid")]
             [(null? (cddr datum)) (error 'parse-exp "Error: no body provided")]
             [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (cadr datum))])
-                   (let-exp params (map parse-exp (cddr datum))))]
-            )]
+                   (let-exp params (map parse-exp (cddr datum))))])
+         ]
 
          ;Let*
          [(eqv? (car datum) 'let*)
@@ -296,6 +304,22 @@
          ;Quote
          [(eqv? (car datum) 'quote)
           (quote-exp (cadr datum))]
+
+         
+
+         ;Or
+         [(eqv? (car datum) 'or)
+          (let* ([exps (cdr datum)])
+            (if (null? exps)
+                '()
+                (or-exp (parse-exp (car exps)) (parse-exp (cons 'or (cdr exps))))))]
+
+         ;Begin
+         [(eqv? (car datum) 'begin)
+          (let* ([exps (cdr datum)])
+            (if (null? exps)
+                '()
+                (begin-exp (parse-exp (car exps)) (parse-exp (cons 'begin (cdr exps))))))]
           
          ;Application
          [else
@@ -303,8 +327,8 @@
                    (map parse-exp (cdr datum)))])]
       [else (error 'parse-exp "bad expression: ~s" datum)])))
 
-(require racket/trace)
-(trace parse-exp)
+;(require racket/trace)
+;(trace parse-exp)
 
 ;-------------------+
 ;                   |
@@ -361,12 +385,28 @@
 
 (define syntax-expand
     (lambda (exp)
+      (if (null? exp) '()
         (cases expression exp
-            [var-exp (symbol) exp] ;; do nothing
-            [lit-exp (literal) exp] ;; do nothing
-            [cond-exp (test bodies)
-                      (if-else-exp test (app-exp (var-exp 'begin) bodies) #f)]
-          [else exp])))
+          [var-exp (symbol) exp] ;; do nothing
+          [lit-exp (literal) exp] ;; do nothing
+          [cond-exp (firstTest firstBodies restExps)
+                    (if (null? restExps)
+                        (if-exp firstTest (car firstBodies))
+                        (if-else-exp firstTest (car firstBodies) (syntax-expand restExps)))]
+          [begin-exp (firstExp rest)
+                     (app-exp (lambda-exp '() (list (syntax-expand firstExp))) (syntax-expand rest))]
+          [or-exp (body rest)
+                  (if (null? rest)
+                      (if-else-exp (syntax-expand body) (syntax-expand body) (lit-exp '()))
+                      (if-else-exp (syntax-expand body) (app-exp (var-exp 'append) (list body (syntax-expand rest))) (syntax-expand rest)))]
+          [let-exp (params body)
+                   (app-exp (lambda-exp (map (lambda (x) (first x)) params) (list (syntax-expand (car body)))) (map (lambda (x) (second x)) params))]
+          [app-exp (rator rands)
+                   (app-exp (syntax-expand rator) (map syntax-expand rands))]
+          [else exp]))))
+
+;(require racket/trace)
+;(trace parse-exp)
 
 ; To be added in assignment 14.
 
@@ -474,7 +514,7 @@
 (define *prim-proc-names* '(+ - * add1 sub1 cons = quote / list->vector vector->list vector?
                               number? symbol? caar cadr cadar list? eq? equal? null? procedure?
                               >= not zero? car cdr length list pair? vector vector-set!
-                              vector-ref display newline cr < map apply begin else))
+                              vector-ref display newline cr < map apply begin else > append))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -511,12 +551,14 @@
       [(null?) (null? (first args))] 
       [(>=) (if (>= (first args) (second args)) #t #f)]
       [(<) (if (< (first args) (second args)) #t #f)]
+      [(>) (if (> (first args) (second args)) #t #f)]
       [(not) (not (first args))] 
       [(zero?) (if (equal? (car args) 0) #t #f)] 
       [(car) (car (first args))]
       [(cdr) (cdr (first args))]
       [(length) (length (first args))] 
       [(list) (apply list args)]
+      [(append) (append (first args) (cdr args))]
       [(procedure?) (if (list? args)
                         (if (list? (first args))
                             (or (procedure? (first args)) (proc-val? (first args)))
