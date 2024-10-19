@@ -81,12 +81,15 @@
    (restExps (or/c (listof expression?) null? expression?))]
 
   [or-exp
-   (body (or/c (listof expression?) expression?))
+   (val (or/c (listof expression?) expression?))
+   (rest (or/c (listof expression?) expression? null?))]
+  
+  [and-exp
+   (val (or/c (listof expression?) expression?))
    (rest (or/c (listof expression?) expression? null?))]
 
   [begin-exp
-    (firstExp (or/c (listof expression?) expression?))
-    (rest (or/c (listof expression?) expression?))]
+    (exps (listof expression?))]
   )
 	
 ;; environment type definitions
@@ -311,15 +314,19 @@
          [(eqv? (car datum) 'or)
           (let* ([exps (cdr datum)])
             (if (null? exps)
-                '()
+                (or-exp (lit-exp '()) (lit-exp '()))
                 (or-exp (parse-exp (car exps)) (parse-exp (cons 'or (cdr exps))))))]
+
+         ;And
+         [(eqv? (car datum) 'and)
+          (let* ([exps (cdr datum)])
+            (if (null? exps)
+                (and-exp (lit-exp '()) (lit-exp '()))
+                (and-exp (parse-exp (car exps)) (parse-exp (cons 'or (cdr exps))))))]
 
          ;Begin
          [(eqv? (car datum) 'begin)
-          (let* ([exps (cdr datum)])
-            (if (null? exps)
-                '()
-                (begin-exp (parse-exp (car exps)) (parse-exp (cons 'begin (cdr exps))))))]
+          (begin-exp (map parse-exp (cdr datum)))]
           
          ;Application
          [else
@@ -392,17 +399,35 @@
           [cond-exp (firstTest firstBodies restExps)
                     (if (null? restExps)
                         (if-exp firstTest (car firstBodies))
-                        (if-else-exp firstTest (car firstBodies) (syntax-expand restExps)))]
-          [begin-exp (firstExp rest)
-                     (app-exp (lambda-exp '() (list (syntax-expand firstExp))) (syntax-expand rest))]
-          [or-exp (body rest)
+                        (if-else-exp (syntax-expand firstTest) (car firstBodies) (syntax-expand restExps)))]
+          [begin-exp (exps)
+                     (app-exp (lambda-exp '() (map syntax-expand exps)) '())]
+          [or-exp (val rest)
+                  (if (equal? val '(lit-exp ())) (lit-exp #f)
+                  (let* ([expanded-val (syntax-expand val)])
                   (if (null? rest)
-                      (if-else-exp (syntax-expand body) (syntax-expand body) (lit-exp '()))
-                      (if-else-exp (syntax-expand body) (app-exp (var-exp 'append) (list body (syntax-expand rest))) (syntax-expand rest)))]
+                      (if-else-exp expanded-val expanded-val (lit-exp #f))
+                      (if-else-exp expanded-val expanded-val (syntax-expand rest)))))]
+          [and-exp (val rest)
+                  (if (equal? val '(lit-exp ())) (lit-exp #t)
+                  (let* ([expanded-val (syntax-expand val)])
+                  (if (null? rest)
+                      expanded-val
+                      (if-else-exp expanded-val (syntax-expand rest) (lit-exp #f)))))]
           [let-exp (params body)
-                   (app-exp (lambda-exp (map (lambda (x) (first x)) params) (list (syntax-expand (car body)))) (map (lambda (x) (second x)) params))]
+                   (app-exp (lambda-exp (map (lambda (x) (first x)) params) (map syntax-expand body)) (map syntax-expand (map (lambda (x) (second x)) params)))]
+          [let*-exp (params body)
+                    (if (null? (cdr params))
+                        (syntax-expand (let-exp params body))
+                    (syntax-expand (let-exp (list (first params)) (list (syntax-expand (let*-exp (cdr params) body))))))]
           [app-exp (rator rands)
                    (app-exp (syntax-expand rator) (map syntax-expand rands))]
+          [if-exp (if-clause body)
+                  (if-exp (syntax-expand if-clause) (syntax-expand body))]
+          [if-else-exp (if-clause true-body false-body)
+                  (if-else-exp (syntax-expand if-clause) (syntax-expand true-body) (syntax-expand false-body))]
+          [lambda-exp (bindings body)
+                      (lambda-exp bindings (map syntax-expand body))]
           [else exp]))))
 
 ;(require racket/trace)
@@ -439,12 +464,20 @@
     (cases expression exp
       [quote-exp (body) body]
       [if-exp (if-clause body)
+              (let* ([test if-clause])
               (when (eval-exp env if-clause)
-                (eval-exp env body))]
+                (eval-exp env body)))]
       [if-else-exp (if-clause true-body false-body)
-              (if (eval-exp env if-clause)
-                  (eval-exp env true-body)
-                  (eval-exp env false-body))]
+                   (if (equal? if-clause true-body)
+                       (let ([test (eval-exp env if-clause)])
+                         (if test
+                             test
+                             (eval-exp env false-body)))
+                       (let ([test (eval-exp env if-clause)])
+                         (if test
+                             (eval-exp env true-body)
+                             (eval-exp env false-body)))
+                       )]
       [let-exp (params bodies) ;Change this to be consistent with ours
                (let* ([init-vals (eval-rands env (map (lambda (x) (second x)) params))]
                       [new-env (extend-env
