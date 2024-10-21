@@ -101,7 +101,7 @@
   [empty-env-record]
   [extended-env-record
    (syms (list-of? symbol?))
-   (vals (list-of? scheme-value?))
+   (vals vector?)
    (env environment?)])
 
 
@@ -243,16 +243,20 @@
                    (named-let-exp (cadr datum) params (map parse-exp (cdddr datum))))]
             )]
 
-         ;Let
+         ;Let/Named
          [(eqv? (car datum) 'let)
-          (cond
-            [(not (check-proper-list (2nd datum))) (error 'parse-exp "Error: Improper let params")]
-            [(not (list? (cadr datum))) (error 'parse-exp "Error: Let params not a list")]
-            [(not (check-lets (2nd datum))) (error 'parse-exp "Error: let params invalid")]
-            [(null? (cddr datum)) (error 'parse-exp "Error: no body provided")]
-            [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (cadr datum))])
-                   (let-exp params (map parse-exp (cddr datum))))])
-         ]
+          (if (list? (cadr datum))
+              (cond
+                [(not (check-proper-list (2nd datum))) (error 'parse-exp "Error: Improper let params")]
+                [(not (list? (cadr datum))) (error 'parse-exp "Error: Let params not a list")]
+                [(not (check-lets (2nd datum))) (error 'parse-exp "Error: let params invalid")]
+                [(null? (cddr datum)) (error 'parse-exp "Error: no body provided")]
+                [else (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (cadr datum))])
+                        (let-exp params (map parse-exp (cddr datum))))])
+              
+              (let ([params (map (lambda (p) (list (car p) (parse-exp (cadr p)))) (caddr datum))])
+                        (named-let-exp (cadr datum) params (map parse-exp (cdddr datum)))))
+          ]
 
          ;Let*
          [(eqv? (car datum) 'let*)
@@ -353,7 +357,7 @@
 
 (define extend-env
   (lambda (syms vals env)
-    (extended-env-record syms vals env)))
+    (extended-env-record syms (list->vector vals) env)))
 
 (define list-find-position
   (lambda (sym los)
@@ -420,6 +424,10 @@
                     (if (null? (cdr params))
                         (syntax-expand (let-exp params body))
                     (syntax-expand (let-exp (list (first params)) (list (syntax-expand (let*-exp (cdr params) body))))))]
+          [named-let-exp (name params body)
+                         (let* ([expanded-body (map syntax-expand body)]
+                                [func (lambda-exp (map (lambda (x) (first x)) params) expanded-body)])
+                           (lambda-exp (list func) expanded-body))]
           [app-exp (rator rands)
                    (app-exp (syntax-expand rator) (map syntax-expand rands))]
           [if-exp (if-clause body)
