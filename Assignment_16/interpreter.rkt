@@ -583,7 +583,8 @@
 (define *prim-proc-names* '(+ - * add1 sub1 cons = quote / list->vector vector->list vector?
                               number? symbol? caar cadr cadar list? eq? equal? null? procedure?
                               >= not zero? car cdr length list pair? vector vector-set!
-                              vector-ref display newline cr < map apply begin else > append eqv?))
+                              vector-ref display newline cr < map apply begin else > append eqv?
+                              quotient list-tail))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -641,8 +642,10 @@
       [(display) (apply display args)]
       [(newline) (newline)]
       [(quote) (first args)]
-      [(map) (map (lambda (x) (apply-proc (first args) x)) (second args))]
+      [(map) (map (lambda (x) (apply-proc (first args) (list x))) (second args))]
       [(apply) (apply (lambda (x) (apply-proc (first args) x)) (cdr args))]
+      [(quotient) (quotient (first args) (second args))]
+      [(list-tail) (list-tail (first args) (second args))]
       [(begin) (eval (append (list 'begin) args))]
       [(else) (eval (append (list 'begin) args))]
       [(cr) (letrec ([make-easy (lambda (str proc)
