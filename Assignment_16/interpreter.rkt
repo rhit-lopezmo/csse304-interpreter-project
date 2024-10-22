@@ -1,7 +1,7 @@
 #lang racket
 
 (require "../chez-init.rkt")
-(provide eval-one-exp)
+(provide eval-one-exp y2 advanced-letrec)
 (provide add-macro-interpreter)
 
 (define add-macro-interpreter (lambda x (error "nyi")))
@@ -87,6 +87,10 @@
   [and-exp
    (val (or/c (listof expression?) expression?))
    (rest (or/c (listof expression?) expression? null?))]
+
+  #| [map-exp
+      (proc expression?)
+   (args (listof expression?))] |#
 
   [begin-exp
     (exps (listof expression?))]
@@ -179,14 +183,8 @@
   (lambda (exp)
     (cond [(null? exp) #f]
           [(not (list? exp)) #f]
-          [(or (eqv? (car exp) 'lambda)
-               (eqv? (car exp) 'let)
-               (eqv? (car exp) 'letrec)
-               (eqv? (car exp) 'let*)
-               (eqv? (car exp) 'set!)
-               (eqv? (car exp) 'if))
-           #f]
-          [else #t])))
+          [(equal? 'app (car exp)) #t]
+          [else #f])))
 
 ; Again, you'll probably want to use your code from A11b
 
@@ -215,7 +213,7 @@
           (if (< (length datum) 3)
               (error 'parse-exp "Error: Missing lambda arguments")
               (if (symbol? (cadr datum))
-                  (if (> (length datum) 3)
+                  (if (> (length datum) 3) ; lambda-exp-var
                       (lambda-exp-var (list (cadr datum))
                                   (map (lambda (x)
                                          (if (app? x)
@@ -224,9 +222,9 @@
                                        (cddr datum)))
                       (lambda-exp-var (list (cadr datum))
                                       (map parse-exp (list (cddr datum)))))
-                  (if (check-for-num (2nd datum))
+                  (if (check-for-num (2nd datum)) 
                                      (error 'parse-exp "Error: Invalid lambda parameters")
-                                     (lambda-exp (2nd datum)
+                                     (lambda-exp (2nd datum) ; lambda-exp
                                                  (map (lambda (x)
                                                         (if (app? x)
                                                             (app-exp (parse-exp (car x)) (map parse-exp (cdr x)))
@@ -312,7 +310,11 @@
          [(eqv? (car datum) 'quote)
           (quote-exp (cadr datum))]
 
-         
+         ; Map
+         #| [(eqv? (car datum) 'map)
+             (let*  ([proc (parse-exp (cadr datum))]
+                     [args (cddr datum)])
+            (app-exp (var-exp 'list) (map (lambda (x) (app-exp proc (parse-exp x))) args)))] |#
 
          ;Or
          [(eqv? (car datum) 'or)
@@ -357,7 +359,10 @@
 
 (define extend-env
   (lambda (syms vals env)
-    (extended-env-record syms (list->vector vals) env)))
+    (if (vector? vals)
+         (extended-env-record syms vals env)
+         (extended-env-record syms (list->vector vals) env))))
+   
 
 (define list-find-position
   (lambda (sym los)
@@ -374,7 +379,7 @@
       [extended-env-record (syms vals env)
                            (let ((pos (list-find-position sym syms)))
                              (if (number? pos)
-                                 (list-ref vals pos)
+                                 (vector-ref vals pos)
                                  (apply-env env sym)))])))
 (define apply-env-global
   (lambda (env sym) 
@@ -436,7 +441,13 @@
                   (if-else-exp (syntax-expand if-clause) (syntax-expand true-body) (syntax-expand false-body))]
           [lambda-exp (bindings body)
                       (lambda-exp bindings (map syntax-expand body))]
-          [else exp]))))
+          [letrec-exp (params body)
+                      (letrec-exp (map (lambda (x) (list (car x) (car (map syntax-expand (cdr x)))))
+                                       params)
+                                  (syntax-expand body))]
+          [else
+           ;(display "no case found, returning exp\n")
+           exp]))))
 
 ;(require racket/trace)
 ;(trace parse-exp)
@@ -465,6 +476,13 @@
     ; later we may add things that are not expressions.
     (eval-exp init-env form)))
 
+(define set-env-vals!
+  (lambda (pos currParams valsVec env) 
+    (cond [(> pos (- (vector-length valsVec) 1)) (void)]
+          [else
+           (vector-set! valsVec pos (eval-exp env (cadar currParams)))
+           (set-env-vals! (+ pos 1) (cdr currParams) valsVec env)])))
+
 ; eval-exp is the main component of the interpreter
 
 (define eval-exp
@@ -486,6 +504,16 @@
                              (eval-exp env true-body)
                              (eval-exp env false-body)))
                        )]
+      [letrec-exp (params bodies)
+                  (let* ([valsVec (make-vector (length params))]
+                         [new-env (extend-env
+                                   (map (lambda (x) (first x)) params)
+                                   valsVec
+                                   env)]
+                         [newVals (eval-rands new-env (map (lambda (x) (second x)) params))])
+                    (set-env-vals! 0 params valsVec new-env)
+                    (eval-exp new-env bodies))]
+                    
       [let-exp (params bodies) ;Change this to be consistent with ours
                (let* ([init-vals (eval-rands env (map (lambda (x) (second x)) params))]
                       [new-env (extend-env
@@ -555,7 +583,7 @@
 (define *prim-proc-names* '(+ - * add1 sub1 cons = quote / list->vector vector->list vector?
                               number? symbol? caar cadr cadar list? eq? equal? null? procedure?
                               >= not zero? car cdr length list pair? vector vector-set!
-                              vector-ref display newline cr < map apply begin else > append))
+                              vector-ref display newline cr < map apply begin else > append eqv?))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -588,7 +616,8 @@
       [(cadar) (cadar (first args))] 
       [(list?) (list? (first args))]
       [(eq?) (if (eq? (first args) (second args)) #t #f)]
-      [(equal?) (if (equal? (first args) (second args)) #t #f)] 
+      [(equal?) (if (equal? (first args) (second args)) #t #f)]
+      [(eqv?) (eqv? (first args) (second args))]
       [(null?) (null? (first args))] 
       [(>=) (if (>= (first args) (second args)) #t #f)]
       [(<) (if (< (first args) (second args)) #t #f)]
@@ -635,6 +664,71 @@
       (pretty-print answer) (newline)
       (rep))))  ; tail-recursive, so stack doesn't grow.
 
+(define my-*p
+  (lambda (self)
+    (lambda (num times)
+      (if (zero? times)
+          0
+          (+ num (self num (sub1 times)))))))
+
+; The Y Combinator: A function that takes a function
+; and returns a recursive version of that function
+
+(define yp
+  (lambda (self)
+    (lambda (f)
+      (f (lambda params
+         (apply ((self self) f) params)))
+    )))
+
+(define y
+  (yp yp))
+
+(define my-*
+  (y my-*p))
+
+
+
+(define-syntax (basic-letrec stx)
+   (syntax-case stx ()
+     [(basic-letrec prod-name prod-body letrec-body)
+      #'(let ((prod-name (y (lambda (prod-name) prod-body))))
+          letrec-body)]))
+
+#| (basic-letrec my-*2 (lambda (num times)
+                         (if (zero? times)
+                             0
+                             (+ num (my-*2 num (sub1 times)))))
+              (my-*2 3 4)) |#
+
+(define my-odd?
+  (lambda (my-odd? my-even?)
+    (lambda (num)
+      (if (zero? num)
+          #f
+          (my-even? (sub1 num))))))
+                      
+(define my-even?
+  (lambda (my-odd? my-even?)
+    (lambda (num)
+      (if (zero? num)
+          #t
+          (my-odd? (sub1 num))))))
+
+(define y2
+  (lambda (which f1 f2)
+    (nyi)))
+
+(define-syntax (advanced-letrec stx)
+  (syntax-case stx ()
+    [(advanced-letrec ((fun-name fun-body)...) letrec-body)
+     #'(error "nyi")]))
+
 (define eval-one-exp
    (lambda (exp) 
        (top-level-eval (syntax-expand (parse-exp exp)))))
+
+(define-syntax nyi
+  (syntax-rules ()
+    ([_]
+     [error "nyi"])))
