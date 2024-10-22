@@ -430,9 +430,12 @@
                         (syntax-expand (let-exp params body))
                     (syntax-expand (let-exp (list (first params)) (list (syntax-expand (let*-exp (cdr params) body))))))]
           [named-let-exp (name params body)
-                         (let* ([expanded-body (map syntax-expand body)]
-                                [func (lambda-exp (map (lambda (x) (first x)) params) expanded-body)])
-                           (lambda-exp (list func) expanded-body))]
+                         (let* ([bindings (map (lambda (x) (car x)) params)]
+                                [vals (map (lambda (x) (syntax-expand (cadr x))) params)]
+                                [expanded-body (map syntax-expand body)]
+                                [letrec-params (list (list name (lambda-exp bindings expanded-body)))]
+                                [letrec-body (app-exp (var-exp name) vals)])
+                           (letrec-exp letrec-params letrec-body))]
           [app-exp (rator rands)
                    (app-exp (syntax-expand rator) (map syntax-expand rands))]
           [if-exp (if-clause body)
@@ -629,7 +632,7 @@
       [(cdr) (cdr (first args))]
       [(length) (length (first args))] 
       [(list) (apply list args)]
-      [(append) (append (first args) (cdr args))]
+      [(append) (apply append args)]
       [(procedure?) (if (list? args)
                         (if (list? (first args))
                             (or (procedure? (first args)) (proc-val? (first args)))
@@ -730,6 +733,9 @@
 (define eval-one-exp
    (lambda (exp) 
        (top-level-eval (syntax-expand (parse-exp exp)))))
+
+(require racket/trace)
+;(trace syntax-expand)
 
 (define-syntax nyi
   (syntax-rules ()
