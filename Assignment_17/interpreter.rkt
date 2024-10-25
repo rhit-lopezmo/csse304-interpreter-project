@@ -1,7 +1,7 @@
 #lang racket
 
 (require "../chez-init.rkt")
-(provide eval-one-exp y2 advanced-letrec)
+(provide eval-one-exp reset-global-env y2 advanced-letrec)
 (provide add-macro-interpreter)
 
 (define add-macro-interpreter (lambda x (error "nyi")))
@@ -60,7 +60,7 @@
    (false-body expression?)]
 
   [set!-exp
-   (var expression?)
+   (var (or/c expression? number? symbol?))
    (body expression?)]
 
   [quote-exp
@@ -88,9 +88,9 @@
    (val (or/c (listof expression?) expression?))
    (rest (or/c (listof expression?) expression? null?))]
 
-  #| [map-exp
-      (proc expression?)
-   (args (listof expression?))] |#
+  [define-exp
+    (var symbol?)
+    (body expression?)]
 
   [begin-exp
     (exps (listof expression?))]
@@ -289,7 +289,7 @@
          [(eqv? (car datum) 'set!)
           (cond
             [(not (equal? (length datum) 3)) (error 'parse-exp "Error: Invalid set! length")]
-            [else (set!-exp (parse-exp (2nd datum)) (parse-exp (3rd datum)))]
+            [else (set!-exp (2nd datum) (parse-exp (3rd datum)))]
             )]
 
          ;Cond
@@ -310,12 +310,6 @@
          [(eqv? (car datum) 'quote)
           (quote-exp (cadr datum))]
 
-         ; Map
-         #| [(eqv? (car datum) 'map)
-             (let*  ([proc (parse-exp (cadr datum))]
-                     [args (cddr datum)])
-            (app-exp (var-exp 'list) (map (lambda (x) (app-exp proc (parse-exp x))) args)))] |#
-
          ;Or
          [(eqv? (car datum) 'or)
           (let* ([exps (cdr datum)])
@@ -333,6 +327,10 @@
          ;Begin
          [(eqv? (car datum) 'begin)
           (begin-exp (map parse-exp (cdr datum)))]
+
+         ;Define
+         [(eqv? (car datum) 'define)
+          (define-exp (cadr datum) (parse-exp (3rd datum)))]
           
          ;Application
          [else
@@ -375,7 +373,7 @@
   (lambda (env sym) 
     (cases environment env 
       [empty-env-record ()      
-                        (apply-env-global init-env sym)]
+                         (apply-env-global init-env sym)]
       [extended-env-record (syms vals env)
                            (let ((pos (list-find-position sym syms)))
                              (if (number? pos)
@@ -385,12 +383,26 @@
   (lambda (env sym) 
     (cases environment env 
       [empty-env-record ()      
-                        (error 'env "variable ~s not found." sym)]
+                         (error 'env "variable ~s not found." sym)]
       [extended-env-record (syms vals env)
                            (let ((pos (list-find-position sym syms)))
                              (if (number? pos)
-                                 (list-ref vals pos)
+                                 (vector-ref vals pos)
                                  (apply-env-global env sym)))])))
+
+(define set-env-var!
+  (lambda (var body env)
+    (cases environment env
+      [extended-env-record (syms vals env)
+                           (let* ([pos (list-find-position var syms)])
+                             (if (number? pos)
+                                  (vector-set! vals pos body)                       
+                                  (set-env-var! var body env)))]
+      [empty-env-record ()
+                        (set-env-var! var body init-env)]
+      [else (error 'env "can't set empty env (set-env-var!)")])))
+
+
 
 
 ;-----------------------+
@@ -442,6 +454,8 @@
                   (if-exp (syntax-expand if-clause) (syntax-expand body))]
           [if-else-exp (if-clause true-body false-body)
                   (if-else-exp (syntax-expand if-clause) (syntax-expand true-body) (syntax-expand false-body))]
+          [define-exp (var body)
+            (define-exp var (syntax-expand body))]
           [lambda-exp (bindings body)
                       (lambda-exp bindings (map syntax-expand body))]
           [letrec-exp (params body)
@@ -534,13 +548,15 @@
       [lambda-exp-var (bindings body) (lambda-proc (closure-exp bindings body env))]
       [var-exp (id)
                (apply-env env id)]
+      [set!-exp (var body) (set-env-var! var (eval-exp env body) env)]
+      [define-exp (var body) (set! init-env (extend-env (list var) (list (eval-exp env body)) init-env))]
       [app-exp (rator rands)
                (cond [(equal? (car rator) 'lambda-exp)
                       (let* ([closure (cadr (eval-exp env rator))]
                              [init-vals (eval-rands env rands)])
                         (let-values ([(closure-params closure-body stored-env) (closure-fields closure)])
                           (let ([new-env (extend-env closure-params init-vals stored-env)])
-                            (last (eval-rands new-env closure-body)))))]
+                             (last (eval-rands new-env closure-body)))))]
                      [(equal? (car rator) 'lambda-exp-var)
                       (let* ([closure (cadr (eval-exp env rator))]
                              [init-vals (eval-rands env rands)])
@@ -587,7 +603,7 @@
                               number? symbol? caar cadr cadar list? eq? equal? null? procedure?
                               >= not zero? car cdr length list pair? vector vector-set!
                               vector-ref display newline cr < map apply begin else > append eqv?
-                              quotient list-tail))
+                              quotient list-tail assq))
 
 (define init-env         ; for now, our initial global environment only contains 
   (extend-env            ; procedure names.  Recall that an environment associates
@@ -595,6 +611,14 @@
    (map prim-proc      
         *prim-proc-names*)
    (empty-env)))
+
+(define reset-global-env
+  (lambda ()
+  (set! init-env (extend-env           
+   *prim-proc-names*   
+   (map prim-proc      
+        *prim-proc-names*)
+   (empty-env)))))
 
 ; Usually an interpreter must define each 
 ; built-in procedure individually.  We are "cheating" a little bit.
@@ -644,6 +668,7 @@
       [(vector-ref) (vector-ref (first args) (second args))]
       [(display) (apply display args)]
       [(newline) (newline)]
+      [(assq) (assq (first args) (second args))]
       [(quote) (first args)]
       [(map) (map (lambda (x) (apply-proc (first args) (list x))) (second args))]
       [(apply) (apply (lambda (x) (apply-proc (first args) x)) (cdr args))]
